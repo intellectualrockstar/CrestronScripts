@@ -81,6 +81,9 @@ foreach ($device in $devs)
 
     if($info.VersionPUF -notmatch $version)
     {
+        $info | Add-Member -NotePropertyName username -NotePropertyValue $username
+        $info | Add-Member -NotePropertyName password -NotePropertyValue $password
+
         if($info.Prompt -match 'NVX-E30' -or $info.Prompt -match 'NVX-D30')
         {
             $type2 += $info
@@ -100,7 +103,6 @@ foreach ($device in $devs)
         {
             Write-Host 'Prompt does not match a known NVX unit. Ignoring Device'
         }
-        
     }
     else
     {
@@ -108,21 +110,29 @@ foreach ($device in $devs)
     }
 }
 
-#start the job
 
+#start the job
 Write-Host "starting scripting block, check back in 30 minutes"
 
-$type1 | Invoke-RunspaceJob -SharedVariables fw1 username password -ScriptBlock {
-    Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw1 -ImageUpdate -Password $password -Secure -Username $username
+if($type1)
+{
+    $type1 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw1 -ShowProgress -ScriptBlock {
+        Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw1 -ImageUpdate -Secure -Username $_.username -Password $_.password
+    }
+}
+if($type2)
+{
+    $type2 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw2 -ShowProgress -ScriptBlock {
+        Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw2 -ImageUpdate -Secure -Username $_.username -Password $_.password
+    }
+}
+if($type3)
+{
+    $type3 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw3 -ShowProgress -ScriptBlock {
+        Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw3 -ImageUpdate -Secure -Username $_.username -Password $_.password
+    }
 }
 
-$type2 | Invoke-RunspaceJob -SharedVariables fw2 username password -ScriptBlock {
-    Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw2 -ImageUpdate -Password $password -Secure -Username $username
-}
-
-$type3 | Invoke-RunspaceJob -SharedVariables fw3 username password -ScriptBlock {
-    Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw3 -ImageUpdate -Password $password -Secure -Username $username
-}
-
+#>
 Write-Host "done"
 Read-Host -Prompt "press enter to exit"
