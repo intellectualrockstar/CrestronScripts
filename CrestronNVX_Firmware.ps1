@@ -74,6 +74,8 @@ if ($decision -eq 0) {
 Write-Host "Running auto discovery... (This could take some time)"
 $devs = Get-AutoDiscovery -Pattern nvx
 
+$count = 0
+
 foreach ($device in $devs)
 {
     Write-Host 'Getting Details for Device:' $device.IP $device.Description
@@ -88,16 +90,19 @@ foreach ($device in $devs)
         {
             $type2 += $info
             Write-Host 'Version Mis-match. Set to load' $fw2File
+            $count++
         }
         elseif($info.Prompt -match 'NVX-35')
         {
             $type1 += $info
             Write-Host 'Version Mis-match. Set to load' $fw1File
+            $count++
         }
         elseif($info.Prompt -match 'NVX-36')
         {
             $type3 += $info
             Write-Host 'Version Mis-match. Set to load' $fw3File
+            $count++
         }
         else
         {
@@ -110,9 +115,11 @@ foreach ($device in $devs)
     }
 }
 
+$time = [math]::ceiling(($count * 10) / 8)
 
 #start the job
-Write-Host "starting scripting block, check back in 30 minutes"
+Write-Host "Starting Background Firmware push on $count devices. Estimated time to complete is $time minutes. "
+Write-Host "DO NOT POWER OFF DEIVCES OR STOP THIS SCRIPT!"
 
 if($type1)
 {
