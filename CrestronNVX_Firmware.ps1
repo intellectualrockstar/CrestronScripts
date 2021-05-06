@@ -1,25 +1,28 @@
-param ($version = "5.1.4651.00035", $username = "admin")
+<#
+.Description    
+Autodiscovers Crestron NVX Devices and Checks firmware version. Uploads firmware if versions do not match.
+.PARAMETER version
+Version Number of PUF to update to
+.PARAMETER AutoUpgrade
+Auto-sends firmware without prompting
+.PARAMETER IgnoreDowngrade
+Automatically Ignores devices with newer firmware
+#>
+
+param ([string]$version = "5.1.4651.00035", [string]$username = "admin", [string]$password, [switch]$AutoUpgrade = $false, [switch]$IgnoreDowngrade = $false)
 
 Import-Module PSCrestron
 
-$password = Read-Host -assecurestring "Please enter the password for $username"
-$password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
-
-function get-Folderlocation([string]$Message, [string]$InitialDirectory, [switch]$NoNewFolderButton)
+#If Password param is empty, prompt for password
+if ([string]::IsNullOrEmpty($password))
 {
-    <#
-    $browseForFolderOptions = 0
-    #$InitialDirectory = (new-object -COM Shell.Application).Namespace(0x05).Self.Path #Make this whatever you want
-    $InitialDirectory = 'C:\'
-    $browseForFolderOptions += 512
+    $securepassword = Read-Host -assecurestring "Please enter the password for $username"
+    $password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securepassword))   
+}
 
-    $app = New-Object -ComObject Shell.Application
-    $folder = $app.BrowseForFolder(0, $Message, $browseForFolderOptions, $InitialDirectory)
-    if ($folder) { $selectedDirectory = $folder.Self.Path } else { $selectedDirectory = '' }
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($app) > $null
-    return $selectedDirectory
-    #>
 
+function get-Folderlocation()
+{
     Add-Type -AssemblyName System.Windows.Forms
     $browser = New-Object System.Windows.Forms.FolderBrowserDialog -Property @{
         ShowNewFolderButton = $false
@@ -29,10 +32,17 @@ function get-Folderlocation([string]$Message, [string]$InitialDirectory, [switch
     $path = $browser.SelectedPath
 
     return $path
-
 }
 
-$userSelectedFolder = get-Folderlocation("Select Folder with Firmware Zip Files")
+function get-VersionArray([string]$ver)
+{
+    $s = $ver.Split(".") | % {[int]$_}
+
+    return $s
+}
+
+$userSelectedFolder = get-Folderlocation
+$ver = get-VersionArray($version)
 
 #variables
 $fw1File = Get-ChildItem -Path $userSelectedFolder -Filter *nvx-35x*.zip #NVX-3x Series Firmware Path
@@ -53,10 +63,7 @@ else
     Write-Host 'Found '$fw1
     Write-Host 'Found '$fw2
     Write-Host 'Found '$fw3
-
 }
-#Write-host 'Are these files the correct Version?'
-#Read-Host -Prompt "Press Enter to Contiune"
 
 $title    = ''
 $question = 'Are the above firmware files correct??'
@@ -76,37 +83,135 @@ $devs = Get-AutoDiscovery -Pattern nvx
 
 $count = 0
 
+$type1 = @()
+$type2 = @()
+$type3 = @()
+
 foreach ($device in $devs)
 {
-    Write-Host 'Getting Details for Device:' $device.IP $device.Description
-    $info = Get-VersionInfo -Device $devs.IP -Secure -Username $username -Password $password
+    Write-Host 'Getting Details for Device:' $device.IP
+    $info = Get-VersionInfo -Device $device.IP -Secure -Username $username -Password $password
 
-    if($info.VersionPUF -notmatch $version)
+    if(![string]::IsNullOrEmpty($info.ErrorMessage.Trim()))
     {
-        $info | Add-Member -NotePropertyName username -NotePropertyValue $username
-        $info | Add-Member -NotePropertyName password -NotePropertyValue $password
+        Write-Host "Device " $device.IP "has an Error Message" $info.ErrorMessage
+    }
+    
+    if($info.VersionPUF -ne $version) #Check if Puf Does not Match
+    {
+        Write-Host $info.VersionPUF
+        #Compare versions to see request is higher or lower
+        $dver = get-VersionArray($info.VersionPUF)
+        
+        #major version
+        if($dver[0] -gt $ver[0])
+        {
+            #This is a downgrade
+            $downgrade = $true
+        }
+        elseif($dver[0] -lt $ver[0])
+        {
+            #this is an upgrade
+            $upgrade = $true
+        }
+        elseif($dver[0] -eq $ver[0]) 
+        {
+            #Major matches, check Minor
+            if($dver[1] -gt $ver[1])
+            {
+                #This is a downgrade
+                $downgrade = $true
+            }
+            elseif($dver[1] -lt $ver[1])
+            {
+                #this is an upgrade
+                $upgrade = $true
+            }
+            elseif($dver[1] -eq $ver[1]) 
+            {
+                #Minor matches, check micro
+                if($dver[2] -gt $ver[2])
+                {
+                    #This is a downgrade
+                    $downgrade = $true
+                }
+                elseif($dver[2] -lt $ver[2])
+                {
+                    #this is an upgrade
+                    $upgrade = $true
+                }
+                elseif($dver[2] -eq $ver[2]) 
+                {
+                    #Micro matches, check nano
+                    if($dver[3] -gt $ver[3])
+                    {
+                        #This is a downgrade
+                        $downgrade = $true
+                    }
+                    elseif($dver[3] -lt $ver[3])
+                    {
+                        #this is an upgrade
+                        $upgrade = $true
+                    }
+                    elseif($dver[3] -eq $ver[3]) 
+                    {
+                        #Why did I even get here! The versions match!
+                        Write-Host 'What? Versions Already Match. Not updating'  
+                    }  
+                }   
+            }
+        }
 
-        if($info.Prompt -match 'NVX-E30' -or $info.Prompt -match 'NVX-D30')
+        if($downgrade -And $IgnoreDowngrade -eq $false)
         {
-            $type2 += $info
-            Write-Host 'Version Mis-match. Set to load' $fw2File
-            $count++
+            $title    = 'Downgrade Warning!'
+            $question = "Downgrade Device " + $info.Hostname + "??"
+            $choices  = '&Yes', '&No'
+
+            $decision = $Host.UI.PromptForChoice($title, $question, $choices, 0)
+            if ($decision -eq 0) 
+            {
+                Write-Host 'Adding to Queue'
+                $addDev = $true
+            } 
+            else 
+            {
+                Write-Host 'Ignoring Device'
+                $addDev = $false
+            }
         }
-        elseif($info.Prompt -match 'NVX-35')
+        elseif($upgrade)
         {
-            $type1 += $info
-            Write-Host 'Version Mis-match. Set to load' $fw1File
-            $count++
+            $addDev = $true
         }
-        elseif($info.Prompt -match 'NVX-36')
+
+        if($addDev)
         {
-            $type3 += $info
-            Write-Host 'Version Mis-match. Set to load' $fw3File
-            $count++
-        }
-        else
-        {
-            Write-Host 'Prompt does not match a known NVX unit. Ignoring Device'
+            $info | Add-Member -NotePropertyName username -NotePropertyValue $username
+            $info | Add-Member -NotePropertyName password -NotePropertyValue $password
+
+            if($info.Prompt -match 'NVX-E30' -or $info.Prompt -match 'NVX-D30')
+            {
+                $type2 += $info
+                Write-Host 'Version Mis-match. Set to load' $fw2File
+                $count++
+            }
+            elseif($info.Prompt -match 'NVX-35')
+            {
+                $type1 += $info
+                Write-Host 'Version Mis-match. Set to load' $fw1File
+                $count++
+            }
+            elseif($info.Prompt -match 'NVX-36')
+            {
+                $type3 += $info
+                Write-Host 'Version Mis-match. Set to load' $fw3File
+                $count++
+            }
+            else
+            {
+                Write-Host 'Prompt does not match a known NVX unit. Ignoring Device'
+            }
         }
     }
     else
@@ -117,29 +222,39 @@ foreach ($device in $devs)
 
 $time = [math]::ceiling(($count * 10) / 8)
 
-#start the job
-Write-Host "Starting Background Firmware push on $count devices. Estimated time to complete is $time minutes. "
-Write-Host "DO NOT POWER OFF DEIVCES OR STOP THIS SCRIPT!"
 
-if($type1)
+
+if($count -ne 0)
 {
-    $type1 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw1 -ShowProgress -ScriptBlock {
-        Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw1 -ImageUpdate -Secure -Username $_.username -Password $_.password
+    #Ask for Conformation to continue with Updates
+
+
+    #start the job
+    Write-Host "Starting Background Firmware push on $count devices. Estimated time to complete is $time minutes. "
+    Write-Host "DO NOT POWER OFF DEIVCES OR STOP THIS SCRIPT!"
+    if($type1)
+    {
+        $type1 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw1 -ShowProgress -ScriptBlock {
+            Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw1 -ImageUpdate -Secure -Username $_.username -Password $_.password
+        }
     }
+    if($type2)
+    {
+        $type2 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw2 -ShowProgress -ScriptBlock {
+            Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw2 -ImageUpdate -Secure -Username $_.username -Password $_.password
+        }
+    }
+    if($type3)
+    {
+        $type3 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw3 -ShowProgress -ScriptBlock {
+            Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw3 -ImageUpdate -Secure -Username $_.username -Password $_.password
+        }
+    }
+    Write-Host 'Done!'
 }
-if($type2)
+else 
 {
-    $type2 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw2 -ShowProgress -ScriptBlock {
-        Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw2 -ImageUpdate -Secure -Username $_.username -Password $_.password
-    }
-}
-if($type3)
-{
-    $type3 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw3 -ShowProgress -ScriptBlock {
-        Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw3 -ImageUpdate -Secure -Username $_.username -Password $_.password
-    }
+    Write-Host "No devices require updating."    
 }
 
-#>
-Write-Host "done"
-Read-Host -Prompt "press enter to exit"
+Read-Host -Prompt "Press Enter to Exit"
