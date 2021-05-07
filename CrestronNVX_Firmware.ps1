@@ -21,6 +21,7 @@ if ([string]::IsNullOrEmpty($password))
 }
 
 
+
 function get-Folderlocation()
 {
     Add-Type -AssemblyName System.Windows.Forms
@@ -220,37 +221,55 @@ foreach ($device in $devs)
     }
 }
 
-$time = [math]::ceiling(($count * 10) / 8)
-
+$time = [math]::ceiling($count / 8)
+$time = $time * 12
 
 
 if($count -ne 0)
 {
     #Ask for Conformation to continue with Updates
+    Write-Host $count 'Devices to be updated. This will take about '$time 'minutes. You cannot stop this script or lose connection to the devices during this time.'
+    $title    = ''
+    $question = 'Do you wish to start the updates?'
+    $choices  = '&Yes', '&No'
 
+    $decision = $Host.UI.PromptForChoice($title, $question, $choices, 0)
+    if ($decision -eq 0) 
+    {
+        $startTime = Get-Date -Format "HH:mm"
+        #start the job
+        Write-Host 'Starting Background Firmware push on '$count 'devices. Estimated time to complete is '$time 'minutes but it could be longer.'
+        Write-Host "Start Time: "$startTime
+        Write-Host "DO NOT POWER OFF DEIVCES, DISCONNECT YOUR NETWORK, OR STOP THIS SCRIPT!"
+        Write-Host "DO NOT POWER OFF DEIVCES, DISCONNECT YOUR NETWORK, OR STOP THIS SCRIPT!"
+        Write-Host "DO NOT POWER OFF DEIVCES, DISCONNECT YOUR NETWORK, OR STOP THIS SCRIPT!"
+        if($type1)
+        {
+            $type1 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw1 -ShowProgress -ScriptBlock {
+               Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw1 -ImageUpdate -Secure -Username $_.username -Password $_.password
+            }
+        }
+        if($type2)
+        {
+            $type2 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw2 -ShowProgress -ScriptBlock {
+                Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw2 -ImageUpdate -Secure -Username $_.username -Password $_.password
+            }
+        
+        if($type3)
+        {
+            $type3 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw3 -ShowProgress -ScriptBlock {
+               Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw3 -ImageUpdate -Secure -Username $_.username -Password $_.password
+            }
+        }
+        Write-Host 'Done!'   
+    } 
+    else 
+    {
+        Write-Host 'Exiting Script'
+        Break
+    }
 
-    #start the job
-    Write-Host "Starting Background Firmware push on $count devices. Estimated time to complete is $time minutes. "
-    Write-Host "DO NOT POWER OFF DEIVCES OR STOP THIS SCRIPT!"
-    if($type1)
-    {
-        $type1 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw1 -ShowProgress -ScriptBlock {
-            Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw1 -ImageUpdate -Secure -Username $_.username -Password $_.password
-        }
-    }
-    if($type2)
-    {
-        $type2 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw2 -ShowProgress -ScriptBlock {
-            Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw2 -ImageUpdate -Secure -Username $_.username -Password $_.password
-        }
-    }
-    if($type3)
-    {
-        $type3 | Invoke-RunspaceJob -ThrottleLimit 8 -SharedVariables fw3 -ShowProgress -ScriptBlock {
-            Send-CrestronFirmware -Device $_.IPAddress -LocalFile $fw3 -ImageUpdate -Secure -Username $_.username -Password $_.password
-        }
-    }
-    Write-Host 'Done!'
+    
 }
 else 
 {
